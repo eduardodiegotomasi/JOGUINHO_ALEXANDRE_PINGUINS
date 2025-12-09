@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <title>Restaurante Delivery Simulator v3</title>
+    <style>
+        /* ESTILOS GERAIS */
+        body {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            background-color: #f0f4f8; 
+            font-family: 'Courier New', monospace; /* Fonte com tema de jogo */
+        }
+
+        /* CONTAINER DO JOGO (MAPA DA CIDADE) */
+        #game-container {
+            width: 700px;
+            height: 500px;
+            border: 10px solid #3d2b2b; /* Borda escura e rica */
+            box-shadow: 0 15px 30px rgba(0, 0, 0, 0.5); /* Sombra mais profunda */
+            position: relative;
+            overflow: hidden;
+            cursor: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="30" height="30"><path d="M15,5 L10,15 L20,15 Z" fill="#FFC300" opacity="0.8"/></svg>') 15 15, pointer; /* Cursor de "Alvo de Entrega" */
+            
+            /* CSS GRID para a Estrutura da Cidade */
+            display: grid;
+            grid-template-columns: 1fr 80px 1fr 80px 1fr; /* Edifícios | Ruas | Edifícios | Ruas | Edifícios */
+            grid-template-rows: 1fr 80px 1fr 80px 1fr; 
+        }
+
+        /* ESTILO PARA AS CÉLULAS DO GRID */
+        .grid-cell {
+            position: relative;
+            box-sizing: border-box;
+        }
+
+        /* RUAS (ASFALTO) */
+        .street-row, .street-col {
+            background-color: #333; /* Asfalto escuro */
+            border: none;
+            box-shadow: inset 0 0 5px rgba(0, 0, 0, 0.5); /* Profundidade na rua */
+        }
+
+        /* MARCAÇÕES DA PISTA (Linhas tracejadas) */
+        .street-row { 
+            border-top: 2px dashed #ffcc00; /* Faixa amarela horizontal */
+            border-bottom: 2px dashed #ffcc00;
+        }
+        .street-col {
+             border-left: 2px dashed #ccc; /* Faixa branca vertical */
+             border-right: 2px dashed #ccc;
+        }
+        
+        /* EDIFÍCIOS/ÁREAS DE CIDADE */
+        .building-area {
+            background-color: #f8edeb; /* Cor de calçada/terreno */
+            border: 1px solid #c9cba3;
+            box-shadow: 2px 2px 5px rgba(0, 0, 0, 0.2); /* Sombra para simular altura */
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #3d2b2b;
+            font-size: 10px;
+            font-weight: bold;
+        }
+
+        /* PLACAR */
+        #score-board {
+            position: absolute;
+            top: 15px;
+            left: 15px;
+            padding: 10px 15px;
+            background: #1d3557; 
+            color: #f77f00; /* Laranja da Entrega */
+            border-radius: 8px;
+            font-weight: bold;
+            z-index: 20;
+            box-shadow: 0 0 15px rgba(247, 127, 0, 0.7);
+        }
+
+        /* RESTAURANTE (Ponto de Partida) */
+        #restaurant {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%); /* Centraliza no Edifício de Partida */
+            width: 80px;
+            height: 80px;
+            background-color: #e63946; /* Vermelho do Restaurante */
+            border: 3px solid #f1faee;
+            border-radius: 5px;
+            text-align: center;
+            line-height: 80px;
+            color: white;
+            font-size: 14px;
+            font-weight: bold;
+            z-index: 50;
+        }
+        
+        /* PERSONAGEM (USANDO IMAGEM) */
+        #player {
+            width: 50px; /* Aumenta o tamanho para a imagem */
+            height: 50px;
+            position: absolute;
+            transition: all 0.6s ease-in-out; /* Transição com mais realismo (aceleração/desaceleração) */
+            z-index: 100;
+            
+            /* Estilo para a imagem de fundo */
+            background-image: url('personagem.png'); /* SEU ARQUIVO DE IMAGEM AQUI */
+            background-size: contain;
+            background-repeat: no-repeat;
+            background-position: center;
+        }
+        
+        /* CLIENTES (USANDO IMAGEM) */
+        .customer {
+            width: 45px;
+            height: 45px;
+            position: absolute;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 25px; 
+            z-index: 50;
+            border-radius: 50%;
+            transition: transform 0.2s; 
+        }
+        
+        .customer.has-food {
+            background-color: #2196f3; /* Azul: Esperando/Prioridade */
+            border: 3px solid #ffeb3b; /* Borda amarela de "urgência" */
+            animation: pulse 1s infinite alternate;
+        }
+
+        .customer.satisfied {
+            background-color: #4caf50; /* Verde: Cliente satisfeito */
+        }
+        
+        @keyframes pulse {
+            from { transform: scale(1); }
+            to { transform: scale(1.1); }
+        }
+    </style>
+</head>
+<body>
+    
+    <audio id="delivery-sound" src="ding.mp3"></audio>
+
+    <div id="game-container">
+        <div id="score-board">Dinheiro: $0</div>
+        
+        <script>
+            const container = document.getElementById('game-container');
+            const GRID_SIZE = 5;
+            let currentBuilding = 0;
+
+            for(let i = 0; i < GRID_SIZE * GRID_SIZE; i++) {
+                const cell = document.createElement('div');
+                cell.className = 'grid-cell';
+
+                // Determina se é rua ou edifício (baseado nas colunas e linhas definidas no CSS Grid)
+                const isStreetCol = (i % GRID_SIZE === 1) || (i % GRID_SIZE === 3);
+                const isStreetRow = (Math.floor(i / GRID_SIZE) === 1) || (Math.floor(i / GRID_SIZE) === 3);
+                
+                if (isStreetCol || isStreetRow) {
+                    cell.classList.add(isStreetCol ? 'street-col' : 'street-row');
+                } else {
+                    cell.classList.add('building-area');
+                    currentBuilding++;
+                    cell.textContent = 'Edifício ' + currentBuilding;
+                }
+                
+                container.appendChild(cell);
+            }
+        </script>
+        
+        </div>
+
+    <script>
+        const gameContainer = document.getElementById('game-container');
+        const scoreBoard = document.getElementById('score-board');
+        const deliverySound = document.getElementById('delivery-sound');
+        let money = 0;
+        
+        // --- CONFIGURAÇÕES DO JOGO ---
+        const PLAYER_SPEED = 600; 
+        const DELIVERY_MONEY = 30;
+        const CUSTOMERS_COUNT = 4;
+        const CUSTOMER_RESET_TIME = 5000;
+        const RESTAURANT_START_POS = { x: 50, y: 50 }; /* Posição de início (canto superior esquerdo) */
+        
+        // --- CRIAR PLAYER ---
+        const player = document.createElement('div');
+        player.id = 'player';
+        player.style.left = `${RESTAURANT_START_POS.x}px`; 
+        player.style.top = `${RESTAURANT_START_POS.y}px`;
+        gameContainer.appendChild(player);
+
+        let playerMoving = false; 
+
+        // --- CRIAR RESTAURANTE ---
+        const restaurant = document.createElement('div');
+        restaurant.id = 'restaurant';
+        restaurant.textContent = 'REST.';
+        
+        // Encontra o Edifício de Início (Canto Superior Esquerdo) e coloca o restaurante
+        const startBuilding = gameContainer.querySelector('.grid-cell.building-area');
+        if (startBuilding) {
+             startBuilding.appendChild(restaurant);
+        }
+
+        // --- CRIAR CLIENTES (Pontos de Entrega) ---
+        let customers = [];
+        // Localizações de entrega fora do restaurante inicial e nas áreas de edifício
+        const CUSTOMER_LOCATIONS = [
+            { x: 370, y: 50 }, { x: 630, y: 50 }, { x: 630, y: 250 }, 
+            { x: 370, y: 450 }, { x: 630, y: 450 }, { x: 50, y: 450 } 
+        ];
+        
+        function getRandomCustomerPosition() {
+            // Garante que o cliente apareça em uma das localizações predefinidas
+            const index = Math.floor(Math.random() * CUSTOMER_LOCATIONS.length);
+            const pos = CUSTOMER_LOCATIONS[index]; 
+            // Posiciona o cliente ligeiramente dentro do edifício
+            return { 
+                x: pos.x - 20 + Math.random() * 10, 
+                y: pos.y - 20 + Math.random() * 10 
+            }; 
+        }
+
+        function createCustomers() {
+            for (let i = 0; i < CUSTOMERS_COUNT; i++) {
+                const pos = getRandomCustomerPosition();
+                const customer = document.createElement('div');
+                customer.className = 'customer has-food';
+                customer.style.left = `${pos.x}px`;
+                customer.style.top = `${pos.y}px`;
+                customer.textContent = '🧍'; // Emoji de Pessoa como cliente
+                customer.isWaiting = true;
+                customer.dataset.id = i;
+
+                gameContainer.appendChild(customer);
+                customers.push(customer);
+            }
+        }
+
+        // --- LÓGICA DE MOVIMENTO E ENTREGA ---
+        
+        gameContainer.addEventListener('click', function(event) {
+            if (playerMoving) return; 
+
+            const clickedElement = event.target;
+            let targetX, targetY, targetCustomer = null;
+
+            if (clickedElement.classList.contains('customer') && clickedElement.isWaiting) {
+                // Clicou no Cliente (Entrega)
+                targetX = parseFloat(clickedElement.style.left);
+                targetY = parseFloat(clickedElement.style.top);
+                targetCustomer = clickedElement;
+            } else if (clickedElement.id === 'restaurant') {
+                 // Clicou no Restaurante (Coletar Pedido) - Apenas move
+                 targetX = RESTAURANT_START_POS.x - player.offsetWidth / 2;
+                 targetY = RESTAURANT_START_POS.y - player.offsetHeight / 2;
+            } else {
+                // Clicou no Mapa (Apenas move)
+                targetX = event.offsetX - player.offsetWidth / 2;
+                targetY = event.offsetY - player.offsetHeight / 2;
+            }
+            
+            // Inicia o movimento 
+            movePlayer(targetX, targetY, targetCustomer);
+        });
+
+        function movePlayer(x, y, targetCustomer = null) {
+            playerMoving = true;
+            
+            // Aplica a nova posição 
+            player.style.left = `${x}px`;
+            player.style.top = `${y}px`;
+
+            // Espera a animação terminar (usa ease-in-out para maior realismo)
+            setTimeout(() => {
+                playerMoving = false;
+                
+                if (targetCustomer && targetCustomer.isWaiting) {
+                    // Verifica se o player está na área do cliente antes de entregar
+                    const playerRect = player.getBoundingClientRect();
+                    const customerRect = targetCustomer.getBoundingClientRect();
+                    
+                    // Simples verificação de sobreposição
+                    if (playerRect.x < customerRect.x + customerRect.width &&
+                        playerRect.x + playerRect.width > customerRect.x &&
+                        playerRect.y < customerRect.y + customerRect.height &&
+                        playerRect.y + playerRect.height > customerRect.y) {
+                         
+                        deliverFood(targetCustomer);
+                    }
+                }
+            }, PLAYER_SPEED); 
+        }
+
+        function deliverFood(customer) {
+            // Toca o som de entrega
+            deliverySound.play();
+
+            // Adiciona o dinheiro
+            money += DELIVERY_MONEY;
+            scoreBoard.textContent = `Dinheiro: $${money}`;
+            
+            // Feedback visual
+            customer.isWaiting = false;
+            customer.classList.remove('has-food');
+            customer.classList.add('satisfied');
+            customer.textContent = '✅'; 
+            
+            // Reaparece o cliente em um novo lugar após um tempo
+            setTimeout(() => {
+                resetCustomer(customer);
+            }, CUSTOMER_RESET_TIME); 
+        }
+
+        function resetCustomer(customer) {
+            const pos = getRandomCustomerPosition();
+            
+            customer.isWaiting = true;
+            customer.classList.remove('satisfied');
+            customer.classList.add('has-food');
+            customer.style.left = `${pos.x}px`;
+            customer.style.top = `${pos.y}px`;
+            customer.textContent = '🧍'; 
+        }
+
+        // Inicia o jogo
+        createCustomers();
+
+    </script>
+</body>
+</html>
